@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client/edge";
 import { withAccelerate } from "@prisma/extension-accelerate";
 import { Hono } from "hono";
-import { sign } from "hono/jwt";
+import { sign, verify } from "hono/jwt";
 
 // Create the main Hono app
 const app = new Hono<{
@@ -9,7 +9,33 @@ const app = new Hono<{
         DATABASE_URL: string;
         JWT_SECRET: string;
     };
+    Variables: {
+        userId: string;
+    };
 }>();
+
+// Middleware for Auth
+app.use("/api/v1/blog/*", async (c, next) => {
+    const jwt = c.req.header("Authorization");
+    if (!jwt) {
+        c.status(401);
+        return c.json({ error: "unauthorized" });
+    }
+
+    const token = jwt.split(" ")[1];
+    const payload = await verify(token, c.env.JWT_SECRET);
+    if (!payload) {
+        c.status(401);
+        return c.json({ error: "unauthorized" });
+    }
+
+    c.set("userId", payload.id);
+    await next();
+});
+
+app.get("/", (c) => {
+    return c.text("Hello there");
+});
 
 // CRUD Routes
 app.post("/api/v1/signup", async (c) => {
@@ -34,8 +60,25 @@ app.post("/api/v1/signup", async (c) => {
     }
 });
 
-app.post("/api/v1/signin", (c) => {
-    return c.text("signin route");
+app.post("/api/v1/signin", async (c) => {
+    const prisma = new PrismaClient({
+        datasourceUrl: c.env?.DATABASE_URL,
+    }).$extends(withAccelerate());
+
+    const body = await c.req.json();
+    const user = await prisma.user.findUnique({
+        where: {
+            email: body.email,
+        },
+    });
+
+    if (!user) {
+        c.status(403);
+        return c.json({ error: "user not found" });
+    }
+
+    const jwt = await sign({ id: user.id }, c.env.JWT_SECRET);
+    return c.json({ jwt });
 });
 
 app.get("/api/v1/blog/:id", (c) => {
@@ -45,6 +88,7 @@ app.get("/api/v1/blog/:id", (c) => {
 });
 
 app.post("/api/v1/blog", (c) => {
+    console.log(c.get("userId"));
     return c.text("signin route");
 });
 
